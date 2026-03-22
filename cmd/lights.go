@@ -154,12 +154,12 @@ func resolveLightID(ctx context.Context, client *api.Client, nameOrID string) (s
 }
 
 func getAPIClient() (*api.Client, error) {
-	cfg, err := auth.GetValidRemoteConfig(context.Background())
+	cfg, err := auth.GetValidConfig(context.Background())
 	if err != nil {
 		return nil, err
 	}
 	if cfg.IsRemote() {
-		return api.NewRemoteClient(cfg.AccessToken), nil
+		return api.NewRemoteClient(cfg.Remote.AccessToken, cfg.Remote.AppKey), nil
 	}
-	return api.NewLocalClient(cfg.BridgeIP, cfg.AppKey), nil
+	return api.NewLocalClient(cfg.Local.BridgeIP, cfg.Local.AppKey), nil
 }

@@ -36,7 +36,7 @@ type oauthTokenResponse struct {
 }
 
 // LoginRemoteBrowser starts a local callback server and opens the browser for Hue OAuth2.
-func LoginRemoteBrowser(ctx context.Context, cfg OAuthConfig) (*Config, error) {
+func LoginRemoteBrowser(ctx context.Context, cfg OAuthConfig) (*RemoteConfig, error) {
 	state, err := randomState()
 	if err != nil {
 		return nil, fmt.Errorf("generating state: %w", err)
@@ -96,11 +96,23 @@ func LoginRemoteBrowser(ctx context.Context, cfg OAuthConfig) (*Config, error) {
 		return nil, ctx.Err()
 	}
 
-	return exchangeHueCode(ctx, cfg, code)
+	remote, err := exchangeHueCode(ctx, cfg, code)
+	if err != nil {
+		return nil, err
+	}
+
+	fmt.Println("Creating application key on bridge...")
+	appKey, err := createRemoteAppKey(ctx, remote.AccessToken)
+	if err != nil {
+		return nil, fmt.Errorf("creating app key: %w", err)
+	}
+	remote.AppKey = appKey
+
+	return remote, nil
 }
 
 // LoginRemoteManual prints the auth URL and waits for the user to paste the code.
-func LoginRemoteManual(ctx context.Context, cfg OAuthConfig) (*Config, error) {
+func LoginRemoteManual(ctx context.Context, cfg OAuthConfig) (*RemoteConfig, error) {
 	state, err := randomState()
 	if err != nil {
 		return nil, fmt.Errorf("generating state: %w", err)
@@ -128,18 +140,30 @@ func LoginRemoteManual(ctx context.Context, cfg OAuthConfig) (*Config, error) {
 		return nil, fmt.Errorf("empty code")
 	}
 
-	return exchangeHueCode(ctx, cfg, code)
+	remote, err := exchangeHueCode(ctx, cfg, code)
+	if err != nil {
+		return nil, err
+	}
+
+	fmt.Println("Creating application key on bridge...")
+	appKey, err := createRemoteAppKey(ctx, remote.AccessToken)
+	if err != nil {
+		return nil, fmt.Errorf("creating app key: %w", err)
+	}
+	remote.AppKey = appKey
+
+	return remote, nil
 }
 
 // RefreshRemoteToken refreshes an expired access token.
-func RefreshRemoteToken(ctx context.Context, cfg *Config) error {
+func RefreshRemoteToken(ctx context.Context, remote *RemoteConfig) error {
 	basicAuth := base64.StdEncoding.EncodeToString(
-		[]byte(cfg.ClientID + ":" + cfg.ClientSecret),
+		[]byte(remote.ClientID + ":" + remote.ClientSecret),
 	)
 
 	data := url.Values{
 		"grant_type":    {"refresh_token"},
-		"refresh_token": {cfg.RefreshToken},
+		"refresh_token": {remote.RefreshToken},
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", HueTokenURL, strings.NewReader(data.Encode()))
@@ -169,36 +193,40 @@ func RefreshRemoteToken(ctx context.Context, cfg *Config) error {
 		return fmt.Errorf("parsing token response: %w", err)
 	}
 
-	cfg.AccessToken = tokenResp.AccessToken
-	cfg.RefreshToken = tokenResp.RefreshToken
-	cfg.ExpiresAt = time.Now().Unix() + tokenResp.ExpiresIn
+	remote.AccessToken = tokenResp.AccessToken
+	remote.RefreshToken = tokenResp.RefreshToken
+	remote.ExpiresAt = time.Now().Unix() + tokenResp.ExpiresIn
 
-	return SaveConfig(cfg)
+	return nil
 }
 
-// GetValidRemoteConfig loads the config and refreshes the token if expired.
-func GetValidRemoteConfig(ctx context.Context) (*Config, error) {
+// GetValidConfig loads the config and refreshes the remote token if needed.
+func GetValidConfig(ctx context.Context) (*Config, error) {
 	cfg, err := LoadConfig()
 	if err != nil {
 		return nil, err
 	}
 
-	if !cfg.IsRemote() {
+	if !cfg.IsRemote() || cfg.Remote == nil {
 		return cfg, nil
 	}
 
-	if time.Now().Unix() < cfg.ExpiresAt {
+	if time.Now().Unix() < cfg.Remote.ExpiresAt {
 		return cfg, nil
 	}
 
-	if err := RefreshRemoteToken(ctx, cfg); err != nil {
+	if err := RefreshRemoteToken(ctx, cfg.Remote); err != nil {
 		return nil, fmt.Errorf("token expired and refresh failed: %w", err)
+	}
+
+	if err := SaveConfig(cfg); err != nil {
+		return nil, fmt.Errorf("saving refreshed config: %w", err)
 	}
 
 	return cfg, nil
 }
 
-func exchangeHueCode(ctx context.Context, cfg OAuthConfig, code string) (*Config, error) {
+func exchangeHueCode(ctx context.Context, cfg OAuthConfig, code string) (*RemoteConfig, error) {
 	basicAuth := base64.StdEncoding.EncodeToString(
 		[]byte(cfg.ClientID + ":" + cfg.ClientSecret),
 	)
@@ -235,14 +263,83 @@ func exchangeHueCode(ctx context.Context, cfg OAuthConfig, code string) (*Config
 		return nil, fmt.Errorf("parsing token response: %w", err)
 	}
 
-	return &Config{
-		Mode:         "remote",
+	return &RemoteConfig{
 		AccessToken:  tokenResp.AccessToken,
 		RefreshToken: tokenResp.RefreshToken,
 		ExpiresAt:    time.Now().Unix() + tokenResp.ExpiresIn,
 		ClientID:     cfg.ClientID,
 		ClientSecret: cfg.ClientSecret,
 	}, nil
+}
+
+const (
+	RemoteBridgeURL = "https://api.meethue.com/bridge"
+	RemoteRouteURL  = "https://api.meethue.com/route/api"
+)
+
+// createRemoteAppKey simulates pressing the link button remotely and creates
+// a whitelist username (app key) on the bridge. This is required for CLIP v2
+// requests even when using the remote API.
+func createRemoteAppKey(ctx context.Context, accessToken string) (string, error) {
+	// Step 1: Simulate link button press
+	linkReq, err := http.NewRequestWithContext(ctx, "PUT", RemoteBridgeURL,
+		strings.NewReader(`{"linkbutton":true}`))
+	if err != nil {
+		return "", err
+	}
+	linkReq.Header.Set("Authorization", "Bearer "+accessToken)
+	linkReq.Header.Set("Content-Type", "application/json")
+
+	linkResp, err := http.DefaultClient.Do(linkReq)
+	if err != nil {
+		return "", fmt.Errorf("activating link button: %w", err)
+	}
+	defer linkResp.Body.Close()
+	io.ReadAll(linkResp.Body) // drain
+
+	if linkResp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("link button activation failed (status %d)", linkResp.StatusCode)
+	}
+
+	// Step 2: Create whitelist user (within 30s window)
+	userReq, err := http.NewRequestWithContext(ctx, "POST", RemoteRouteURL,
+		strings.NewReader(fmt.Sprintf(`{"devicetype":"%s"}`, DeviceType)))
+	if err != nil {
+		return "", err
+	}
+	userReq.Header.Set("Authorization", "Bearer "+accessToken)
+	userReq.Header.Set("Content-Type", "application/json")
+
+	userResp, err := http.DefaultClient.Do(userReq)
+	if err != nil {
+		return "", fmt.Errorf("creating whitelist user: %w", err)
+	}
+	defer userResp.Body.Close()
+
+	body, err := io.ReadAll(userResp.Body)
+	if err != nil {
+		return "", fmt.Errorf("reading response: %w", err)
+	}
+
+	// Response is an array like the local pairing response
+	var results []pairResponse
+	if err := json.Unmarshal(body, &results); err != nil {
+		return "", fmt.Errorf("parsing response: %w (body: %s)", err, string(body))
+	}
+
+	if len(results) == 0 {
+		return "", fmt.Errorf("empty response from bridge")
+	}
+
+	if results[0].Error != nil {
+		return "", fmt.Errorf("bridge error: %s", results[0].Error.Description)
+	}
+
+	if results[0].Success == nil || results[0].Success.Username == "" {
+		return "", fmt.Errorf("unexpected response: no username returned")
+	}
+
+	return results[0].Success.Username, nil
 }
 
 func buildHueAuthURL(clientID, appID, deviceID, redirectURI, state string) string {

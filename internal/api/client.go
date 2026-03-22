@@ -33,10 +33,12 @@ func NewLocalClient(bridgeIP, appKey string) *Client {
 }
 
 // NewRemoteClient creates a client for the Hue Remote API (cloud).
-func NewRemoteClient(bearerToken string) *Client {
+// Requires both the OAuth2 bearer token and the app key (whitelist username).
+func NewRemoteClient(bearerToken, appKey string) *Client {
 	return &Client{
 		httpClient:  &http.Client{},
 		baseURL:     RemoteBaseURL,
+		appKey:      appKey,
 		bearerToken: bearerToken,
 	}
 }
@@ -44,7 +46,8 @@ func NewRemoteClient(bearerToken string) *Client {
 func (c *Client) setAuth(req *http.Request) {
 	if c.bearerToken != "" {
 		req.Header.Set("Authorization", "Bearer "+c.bearerToken)
-	} else {
+	}
+	if c.appKey != "" {
 		req.Header.Set("hue-application-key", c.appKey)
 	}
 }

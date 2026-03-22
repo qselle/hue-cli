@@ -7,22 +7,36 @@ import (
 	"path/filepath"
 )
 
-type Config struct {
-	// Local mode
-	BridgeIP string `json:"bridge_ip,omitempty"`
-	AppKey   string `json:"app_key,omitempty"`
+type LocalConfig struct {
+	BridgeIP string `json:"bridge_ip"`
+	AppKey   string `json:"app_key"`
+}
 
-	// Remote mode
-	Mode         string `json:"mode,omitempty"` // "local" or "remote"
-	AccessToken  string `json:"access_token,omitempty"`
-	RefreshToken string `json:"refresh_token,omitempty"`
-	ExpiresAt    int64  `json:"expires_at,omitempty"`
-	ClientID     string `json:"client_id,omitempty"`
-	ClientSecret string `json:"client_secret,omitempty"`
+type RemoteConfig struct {
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	ExpiresAt    int64  `json:"expires_at"`
+	ClientID     string `json:"client_id"`
+	ClientSecret string `json:"client_secret"`
+	AppKey       string `json:"app_key"` // whitelist username on bridge, needed for CLIP v2
+}
+
+type Config struct {
+	Active string        `json:"active"` // "local" or "remote"
+	Local  *LocalConfig  `json:"local,omitempty"`
+	Remote *RemoteConfig `json:"remote,omitempty"`
 }
 
 func (c *Config) IsRemote() bool {
-	return c.Mode == "remote"
+	return c.Active == "remote"
+}
+
+func (c *Config) HasLocal() bool {
+	return c.Local != nil && c.Local.BridgeIP != "" && c.Local.AppKey != ""
+}
+
+func (c *Config) HasRemote() bool {
+	return c.Remote != nil && c.Remote.AccessToken != ""
 }
 
 func configDir() (string, error) {
@@ -65,7 +79,7 @@ func LoadConfig() (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("not paired — run 'hue-cli auth' first")
+			return nil, fmt.Errorf("not authenticated — run 'hue-cli auth' first")
 		}
 		return nil, fmt.Errorf("reading config: %w", err)
 	}
@@ -76,6 +90,30 @@ func LoadConfig() (*Config, error) {
 	}
 
 	return &cfg, nil
+}
+
+// LoadOrCreate loads existing config or returns a new empty one.
+func LoadOrCreate() *Config {
+	cfg, err := LoadConfig()
+	if err != nil {
+		return &Config{}
+	}
+	return cfg
+}
+
+// SetLocal updates the local credentials, preserving remote credentials.
+func (c *Config) SetLocal(bridgeIP, appKey string) {
+	c.Local = &LocalConfig{
+		BridgeIP: bridgeIP,
+		AppKey:   appKey,
+	}
+	c.Active = "local"
+}
+
+// SetRemote updates the remote credentials, preserving local credentials.
+func (c *Config) SetRemote(remote *RemoteConfig) {
+	c.Remote = remote
+	c.Active = "remote"
 }
 
 func ClearConfig() error {
