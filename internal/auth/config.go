@@ -8,8 +8,21 @@ import (
 )
 
 type Config struct {
-	BridgeIP string `json:"bridge_ip"`
-	AppKey   string `json:"app_key"`
+	// Local mode
+	BridgeIP string `json:"bridge_ip,omitempty"`
+	AppKey   string `json:"app_key,omitempty"`
+
+	// Remote mode
+	Mode         string `json:"mode,omitempty"` // "local" or "remote"
+	AccessToken  string `json:"access_token,omitempty"`
+	RefreshToken string `json:"refresh_token,omitempty"`
+	ExpiresAt    int64  `json:"expires_at,omitempty"`
+	ClientID     string `json:"client_id,omitempty"`
+	ClientSecret string `json:"client_secret,omitempty"`
+}
+
+func (c *Config) IsRemote() bool {
+	return c.Mode == "remote"
 }
 
 func configDir() (string, error) {

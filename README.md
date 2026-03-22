@@ -2,6 +2,8 @@
 
 A command-line interface and MCP server for the Philips Hue Bridge. Control your lights, scenes, and rooms from the terminal or through AI agents.
 
+Supports both **local** (LAN) and **remote** (Hue Cloud) access.
+
 ## Install
 
 ```bash
@@ -12,19 +14,34 @@ Or download a binary from [Releases](https://github.com/qselle/hue-cli/releases)
 
 ## Setup
 
-Pair with your Hue Bridge (one-time):
+### Local mode (same network)
+
+Pair with your Hue Bridge on the local network:
 
 ```bash
 hue-cli auth
 ```
 
-This discovers your bridge on the local network and asks you to press the link button. Credentials are stored at `~/.config/hue-cli/config.json`.
-
-If auto-discovery doesn't work, specify the bridge IP manually:
+This discovers your bridge and asks you to press the link button. If auto-discovery doesn't work:
 
 ```bash
 hue-cli auth --bridge-ip 192.168.1.42
 ```
+
+### Remote mode (Hue Cloud)
+
+Control lights from anywhere via the Hue Cloud API:
+
+1. Register a free app at [developers.meethue.com/my-apps](https://developers.meethue.com/my-apps/)
+2. Authenticate:
+
+```bash
+HUE_CLIENT_ID=xxx HUE_CLIENT_SECRET=xxx HUE_APP_ID=xxx hue-cli auth --remote
+```
+
+On headless servers, add `--manual` to paste the authorization code manually.
+
+Tokens auto-refresh transparently. Credentials are stored at `~/.config/hue-cli/config.json`.
 
 ## Usage
 
@@ -49,18 +66,20 @@ hue-cli rooms
 hue-cli lights --json
 hue-cli scenes --json
 
-# Check pairing status
+# Check authentication status
 hue-cli auth status
 
 # Remove stored credentials
 hue-cli auth forget
 ```
 
+All commands work the same in both local and remote mode — the CLI picks the right transport based on your stored config.
+
 ## MCP Server
 
 Exposes five tools: `list_lights`, `set_light`, `list_scenes`, `activate_scene`, and `list_rooms`.
 
-You must pair first (see [Setup](#setup)), then start the server:
+Authenticate first (see [Setup](#setup)), then start the server:
 
 ```bash
 hue-cli serve                # stdio transport

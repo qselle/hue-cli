@@ -10,13 +10,17 @@ import (
 	"strings"
 )
 
+const RemoteBaseURL = "https://api.meethue.com/route/clip/v2"
+
 type Client struct {
-	httpClient *http.Client
-	baseURL    string
-	appKey     string
+	httpClient  *http.Client
+	baseURL     string
+	appKey      string // local mode
+	bearerToken string // remote mode
 }
 
-func NewClient(bridgeIP, appKey string) *Client {
+// NewLocalClient creates a client for the local Hue Bridge API.
+func NewLocalClient(bridgeIP, appKey string) *Client {
 	return &Client{
 		httpClient: &http.Client{
 			Transport: &http.Transport{
@@ -28,6 +32,23 @@ func NewClient(bridgeIP, appKey string) *Client {
 	}
 }
 
+// NewRemoteClient creates a client for the Hue Remote API (cloud).
+func NewRemoteClient(bearerToken string) *Client {
+	return &Client{
+		httpClient:  &http.Client{},
+		baseURL:     RemoteBaseURL,
+		bearerToken: bearerToken,
+	}
+}
+
+func (c *Client) setAuth(req *http.Request) {
+	if c.bearerToken != "" {
+		req.Header.Set("Authorization", "Bearer "+c.bearerToken)
+	} else {
+		req.Header.Set("hue-application-key", c.appKey)
+	}
+}
+
 func (c *Client) get(ctx context.Context, path string) ([]byte, error) {
 	url := c.baseURL + path
 
@@ -35,7 +56,7 @@ func (c *Client) get(ctx context.Context, path string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("hue-application-key", c.appKey)
+	c.setAuth(req)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -67,7 +88,7 @@ func (c *Client) put(ctx context.Context, path string, payload any) ([]byte, err
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("hue-application-key", c.appKey)
+	c.setAuth(req)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.httpClient.Do(req)

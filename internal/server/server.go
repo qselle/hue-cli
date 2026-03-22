@@ -258,11 +258,14 @@ func makeListRooms() func(context.Context, *mcp.CallToolRequest, ListRoomsInput)
 // --- helpers ---
 
 func getClient() (*api.Client, error) {
-	cfg, err := auth.LoadConfig()
+	cfg, err := auth.GetValidRemoteConfig(context.Background())
 	if err != nil {
-		return nil, fmt.Errorf("not paired — run 'hue-cli auth' first: %w", err)
+		return nil, fmt.Errorf("not authenticated — run 'hue-cli auth' first: %w", err)
 	}
-	return api.NewClient(cfg.BridgeIP, cfg.AppKey), nil
+	if cfg.IsRemote() {
+		return api.NewRemoteClient(cfg.AccessToken), nil
+	}
+	return api.NewLocalClient(cfg.BridgeIP, cfg.AppKey), nil
 }
 
 func resolveLightID(ctx context.Context, client *api.Client, nameOrID string) (string, error) {
